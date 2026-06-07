@@ -1,0 +1,24 @@
+{
+  "name": "@a2a-registry/agent-registry",
+  "version": "0.1.0",
+  "description": "NPM wrapper for the Agent Registry Python MCP servers",
+  "private": false,
+  "type": "commonjs",
+  "bin": {
+    "agent-registry": "./bin/agent-registry.js",
+    "agent-router": "./bin/agent-router.js"
+  },
+  "files": [
+    "bin/",
+    "src/**/*.py",
+    "pyproject.toml",
+    "README.md",
+    "uv.lock"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

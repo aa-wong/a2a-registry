@@ -42,6 +42,8 @@ the query interface.
 
 ## Quick start
 
+Run the registry directly from this checkout:
+
 ```bash
 cd registry
 uv sync
@@ -56,10 +58,23 @@ uv run agent-registry
 uv run agent-registry --transport http --host 0.0.0.0 --port 8765
 ```
 
+Or use one-shot install commands:
+
+```bash
+# Python-native
+uvx --from ./registry agent-registry
+
+# Node/MCP-client friendly wrapper
+npx --yes ./registry
+```
+
 ### Use it from Claude Code
 
 ```bash
 claude mcp add agent-registry -- uv --directory "$(pwd)/registry" run agent-registry
+
+# After publishing the npm wrapper:
+claude mcp add agent-registry -- npx -y @a2a-registry/agent-registry
 ```
 
 Then ask: *"Find an agent that knows about Aaron and ask it about his AWS

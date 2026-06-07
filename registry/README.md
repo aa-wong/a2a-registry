@@ -27,6 +27,32 @@ cd registry
 uv sync
 ```
 
+## One-shot install
+
+The Python package exposes console scripts, so `uvx` can run it directly:
+
+```bash
+# From this checkout
+uvx --from . agent-registry
+uvx --from . agent-router
+
+# From GitHub after pushing this repo
+uvx --from "git+https://github.com/<owner>/a2a-registry.git#subdirectory=registry" agent-registry
+```
+
+This directory is also an npm package wrapper around those Python entry points.
+The wrapper expects `uvx` to be installed and keeps the Python package as the
+source of truth:
+
+```bash
+# From this checkout
+npx --yes .
+
+# After publishing the npm package
+npx --yes @a2a-registry/agent-registry
+npx --yes --package @a2a-registry/agent-registry agent-router
+```
+
 ## Run
 
 ```bash
@@ -72,6 +98,10 @@ trace metadata rather than being treated as unrelated turns.
 
 ```bash
 claude mcp add agent-registry -- uv --directory /path/to/weave-hack/registry run agent-registry
+
+# Or, after publishing the npm wrapper:
+claude mcp add agent-registry -- npx -y @a2a-registry/agent-registry
+claude mcp add agent-router -- npx -y --package @a2a-registry/agent-registry agent-router
 ```
 
 Then try: *"Find an agent that knows about Aaron and ask it about his AWS
@@ -89,7 +119,9 @@ uv run python tests/smoke_test.py
 
 ## Storage
 
-SQLite at `registry/registry.db` (override with `AGENT_REGISTRY_DB`).
+SQLite defaults to `registry/registry.db` when run from a source checkout. When
+run as an installed `uvx`/`npx` tool, it uses a per-user data directory. Override
+either mode with `AGENT_REGISTRY_DB`.
 Records store the provider's card verbatim plus registry metadata
 (status, timestamps, denormalized tags). Router conversations and local turn
 transcripts are stored in the same database.

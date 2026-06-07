@@ -11,12 +11,33 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-DEFAULT_DB = Path(__file__).resolve().parents[2] / "registry.db"
+
+def _user_data_dir() -> Path:
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "agent-registry"
+    if os.name == "nt":
+        appdata = os.getenv("APPDATA")
+        if appdata:
+            return Path(appdata) / "agent-registry"
+    xdg_data_home = os.getenv("XDG_DATA_HOME")
+    base = Path(xdg_data_home) if xdg_data_home else Path.home() / ".local" / "share"
+    return base / "agent-registry"
+
+
+def _default_db() -> Path:
+    source_root = Path(__file__).resolve().parents[2]
+    if (source_root / "pyproject.toml").exists():
+        return source_root / "registry.db"
+    return _user_data_dir() / "registry.db"
+
+
+DEFAULT_DB = _default_db()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -71,7 +92,9 @@ def now_iso() -> str:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path())
+    path = db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     return conn
