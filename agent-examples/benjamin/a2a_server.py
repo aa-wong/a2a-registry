@@ -234,7 +234,7 @@ def grep_vaults(query: str, max_matches: int = MAX_GREP_MATCHES) -> str:
 
 
 obsidian_agent = Agent(
-    name="Obsidian Knowledge Base Agent",
+    name="Benjamin's Knowledge Base Agent",
     model=_openrouter_model(),
     instructions=f"""
 You answer questions about the Benjamin's knowledge. It's in his Obsidian vault.
@@ -321,7 +321,7 @@ skill = AgentSkill(
     description="Answers questions about Benjamin's knowledge base.",
     input_modes=["text/plain"],
     output_modes=["text/plain"],
-    tags=["obsidian", "knowledge-base", "notes", "search"],
+    tags=["ai engineer", "swe"],
     examples=[
         "What do his notes say about Redis memory?",
         "Find notes related to agent protocols.",
