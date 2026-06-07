@@ -1,9 +1,16 @@
-"""SQLite persistence for registry records.
+"""Persistence for registry records — Postgres (Neon) or SQLite.
 
 Each record wraps a provider-authored A2A Agent Card (stored verbatim as
 JSON) with registry-side metadata: id, status, timestamps, denormalized
-tags. Connections are opened per operation — cheap for SQLite and safe
-across the async server's worker threads.
+tags. Backend selection: if DATABASE_URL is set (e.g. a Neon connection
+string), connect to Postgres via psycopg; otherwise fall back to a local
+SQLite file — zero-setup for local dev and tests.
+
+Connections are opened per operation — cheap for SQLite, and the right
+shape for serverless Postgres (Neon's pooler) where connections must not
+outlive a Lambda invocation. SQL is written once in %s placeholder style;
+the thin _Conn wrapper rewrites %s -> ? for SQLite. The schema DDL and the
+ON CONFLICT upsert are valid in both dialects verbatim.
 """
 
 from __future__ import annotations
@@ -15,6 +22,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DEFAULT_DB = Path(__file__).resolve().parents[2] / "registry.db"
 
@@ -61,6 +72,14 @@ CREATE TABLE IF NOT EXISTS conversation_turns (
 );
 """
 
+# DSNs whose schema has been ensured this process — Postgres only. SQLite
+# re-runs the (idempotent) DDL per connection, as before.
+_pg_schema_ready: set[str] = set()
+
+
+def database_url() -> str | None:
+    return os.environ.get("DATABASE_URL") or None
+
 
 def db_path() -> Path:
     return Path(os.environ.get("AGENT_REGISTRY_DB", DEFAULT_DB))
@@ -70,14 +89,50 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _connect() -> sqlite3.Connection:
+class _Conn:
+    """Backend-uniform connection: rewrites %s placeholders to ? for SQLite."""
+
+    def __init__(self, raw: Any, is_pg: bool):
+        self._raw = raw
+        self._is_pg = is_pg
+
+    def execute(self, sql: str, params: tuple | list = ()) -> Any:
+        if not self._is_pg:
+            sql = sql.replace("%s", "?")
+        return self._raw.execute(sql, params)
+
+    def __enter__(self) -> "_Conn":
+        self._raw.__enter__()
+        return self
+
+    def __exit__(self, *exc: Any) -> Any:
+        # sqlite3: commit/rollback (connection stays open, GC'd later).
+        # psycopg: commit/rollback then close — required so connections
+        # never outlive a serverless invocation.
+        return self._raw.__exit__(*exc)
+
+
+def _connect() -> _Conn:
+    dsn = database_url()
+    if dsn:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        conn = psycopg.connect(dsn, row_factory=dict_row)
+        if dsn not in _pg_schema_ready:
+            for statement in SCHEMA.split(";"):
+                if statement.strip():
+                    conn.execute(statement)
+            conn.commit()
+            _pg_schema_ready.add(dsn)
+        return _Conn(conn, is_pg=True)
     conn = sqlite3.connect(db_path())
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
-    return conn
+    return _Conn(conn, is_pg=False)
 
 
-def _to_record(row: sqlite3.Row) -> dict[str, Any]:
+def _to_record(row: Any) -> dict[str, Any]:
     return {
         "id": row["id"],
         "card_url": row["card_url"],
@@ -90,7 +145,7 @@ def _to_record(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def _to_turn(row: sqlite3.Row, include_raw: bool = False) -> dict[str, Any]:
+def _to_turn(row: Any, include_raw: bool = False) -> dict[str, Any]:
     turn = {
         "id": row["id"],
         "conversation_id": row["conversation_id"],
@@ -115,7 +170,7 @@ def _to_turn(row: sqlite3.Row, include_raw: bool = False) -> dict[str, Any]:
 
 
 def _to_conversation(
-    row: sqlite3.Row,
+    row: Any,
     turns: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     conversation = {
@@ -146,7 +201,7 @@ def upsert_agent(
     """Insert a new record, or refresh the card on an existing card_url."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, registered_at FROM agents WHERE card_url = ?", (card_url,)
+            "SELECT id, registered_at FROM agents WHERE card_url = %s", (card_url,)
         ).fetchone()
         agent_id = row["id"] if row else f"agt_{uuid.uuid4().hex[:12]}"
         registered_at = row["registered_at"] if row else now_iso()
@@ -154,7 +209,7 @@ def upsert_agent(
             """
             INSERT INTO agents (id, card_url, endpoint, card, tags, status,
                                 registered_at, last_seen_at)
-            VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+            VALUES (%s, %s, %s, %s, %s, 'active', %s, %s)
             ON CONFLICT(card_url) DO UPDATE SET
                 endpoint = excluded.endpoint,
                 card = excluded.card,
@@ -178,7 +233,9 @@ def upsert_agent(
 
 def get_agent(agent_id: str) -> dict[str, Any] | None:
     with _connect() as conn:
-        row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM agents WHERE id = %s", (agent_id,)
+        ).fetchone()
         return _to_record(row) if row else None
 
 
@@ -186,7 +243,7 @@ def list_agents(status: str | None = None) -> list[dict[str, Any]]:
     with _connect() as conn:
         if status:
             rows = conn.execute(
-                "SELECT * FROM agents WHERE status = ? ORDER BY registered_at",
+                "SELECT * FROM agents WHERE status = %s ORDER BY registered_at",
                 (status,),
             ).fetchall()
         else:
@@ -200,18 +257,18 @@ def update_status(agent_id: str, status: str, seen: bool) -> None:
     with _connect() as conn:
         if seen:
             conn.execute(
-                "UPDATE agents SET status = ?, last_seen_at = ? WHERE id = ?",
+                "UPDATE agents SET status = %s, last_seen_at = %s WHERE id = %s",
                 (status, now_iso(), agent_id),
             )
         else:
             conn.execute(
-                "UPDATE agents SET status = ? WHERE id = ?", (status, agent_id)
+                "UPDATE agents SET status = %s WHERE id = %s", (status, agent_id)
             )
 
 
 def delete_agent(agent_id: str) -> bool:
     with _connect() as conn:
-        cur = conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+        cur = conn.execute("DELETE FROM agents WHERE id = %s", (agent_id,))
         return cur.rowcount > 0
 
 
@@ -234,7 +291,7 @@ def create_conversation(
                 weave_trace_id, weave_root_call_id, status,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'active', %s, %s)
             """,
             (
                 conversation_id,
@@ -261,8 +318,8 @@ def set_conversation_trace(
         conn.execute(
             """
             UPDATE conversations
-            SET weave_trace_id = ?, weave_root_call_id = ?, updated_at = ?
-            WHERE id = ?
+            SET weave_trace_id = %s, weave_root_call_id = %s, updated_at = %s
+            WHERE id = %s
             """,
             (weave_trace_id, weave_root_call_id, now_iso(), conversation_id),
         )
@@ -277,7 +334,7 @@ def update_conversation_context(
 ) -> None:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT a2a_context_id, task_id FROM conversations WHERE id = ?",
+            "SELECT a2a_context_id, task_id FROM conversations WHERE id = %s",
             (conversation_id,),
         ).fetchone()
         if row is None:
@@ -285,8 +342,8 @@ def update_conversation_context(
         conn.execute(
             """
             UPDATE conversations
-            SET a2a_context_id = ?, task_id = ?, status = ?, updated_at = ?
-            WHERE id = ?
+            SET a2a_context_id = %s, task_id = %s, status = %s, updated_at = %s
+            WHERE id = %s
             """,
             (
                 a2a_context_id or row["a2a_context_id"],
@@ -311,7 +368,7 @@ def append_conversation_turn(
     with _connect() as conn:
         row = conn.execute(
             "SELECT COALESCE(MAX(turn_index), 0) AS max_turn "
-            "FROM conversation_turns WHERE conversation_id = ?",
+            "FROM conversation_turns WHERE conversation_id = %s",
             (conversation_id,),
         ).fetchone()
         turn_index = int(row["max_turn"]) + 1
@@ -326,7 +383,7 @@ def append_conversation_turn(
                 id, conversation_id, turn_index, request, response,
                 raw_response, error, a2a_context_id, task_id, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 turn_id,
@@ -342,9 +399,9 @@ def append_conversation_turn(
             ),
         )
         turn = conn.execute(
-            "SELECT * FROM conversation_turns WHERE id = ?", (turn_id,)
+            "SELECT * FROM conversation_turns WHERE id = %s", (turn_id,)
         ).fetchone()
-        return _to_turn(turn)  # type: ignore[arg-type]
+        return _to_turn(turn)
 
 
 def get_conversation(
@@ -355,7 +412,7 @@ def get_conversation(
 ) -> dict[str, Any] | None:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
+            "SELECT * FROM conversations WHERE id = %s", (conversation_id,)
         ).fetchone()
         if row is None:
             return None
@@ -363,7 +420,7 @@ def get_conversation(
         if include_turns:
             turn_rows = conn.execute(
                 "SELECT * FROM conversation_turns "
-                "WHERE conversation_id = ? ORDER BY turn_index",
+                "WHERE conversation_id = %s ORDER BY turn_index",
                 (conversation_id,),
             ).fetchall()
             turns = [_to_turn(turn, include_raw=include_raw) for turn in turn_rows]
@@ -379,16 +436,16 @@ def list_conversations(
     clauses: list[str] = []
     params: list[Any] = []
     if status:
-        clauses.append("status = ?")
+        clauses.append("status = %s")
         params.append(status)
     if agent_id:
-        clauses.append("agent_id = ?")
+        clauses.append("agent_id = %s")
         params.append(agent_id)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(limit)
     with _connect() as conn:
         rows = conn.execute(
-            f"SELECT * FROM conversations {where} ORDER BY updated_at DESC LIMIT ?",
+            f"SELECT * FROM conversations {where} ORDER BY updated_at DESC LIMIT %s",
             params,
         ).fetchall()
         return [_to_conversation(row) for row in rows]
@@ -397,6 +454,6 @@ def list_conversations(
 def finish_conversation(conversation_id: str, status: str = "completed") -> None:
     with _connect() as conn:
         conn.execute(
-            "UPDATE conversations SET status = ?, updated_at = ? WHERE id = ?",
+            "UPDATE conversations SET status = %s, updated_at = %s WHERE id = %s",
             (status, now_iso(), conversation_id),
         )

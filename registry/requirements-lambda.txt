@@ -1,0 +1,7 @@
+# Lambda runtime deps — the MCP server import path only (no weave: that's
+# router-only and would triple the package size).
+mcp>=1.27,<2
+httpx>=0.27
+psycopg[binary]>=3.2
+python-dotenv>=1.0
+mangum>=0.17
