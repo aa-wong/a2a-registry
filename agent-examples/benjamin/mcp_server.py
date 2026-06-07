@@ -5,8 +5,8 @@ from mcp.server.fastmcp import FastMCP
 load_dotenv()
 
 mcp = FastMCP(
-    "obsidian-a2a",
-    instructions=("Use this ask_agent tool to consult Benjamin's knowledge. "),
+    "benjamin-knowledge",
+    instructions=("Use the ask_agent tool to consult Benjamin's knowledge. "),
 )
 
 
