@@ -14,6 +14,7 @@ dependencies = [
 [project.scripts]
 agent-registry = "agent_registry.server:main"
 agent-router = "agent_registry.router:main"
+agent-registry-ui = "agent_registry.ui:main"
 
 [build-system]
 requires = ["hatchling"]
