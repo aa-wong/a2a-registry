@@ -8,7 +8,7 @@ discover them via MCP tools, then communicate peer-to-peer over A2A.
 
 Design doc: [`../docs/agent-registry-design.md`](../docs/agent-registry-design.md)
 
-## MCP tools
+## Registry MCP tools
 
 | Tool | Purpose |
 |---|---|
@@ -37,6 +37,37 @@ uv run agent-registry
 uv run agent-registry --transport http --host 0.0.0.0 --port 8765
 ```
 
+## Router MCP server
+
+`agent-router` is the MCP server for discovery plus A2A chat orchestration. It
+uses the same SQLite registry, discovers up to 10 matching active agents by
+default, asks them in parallel, and returns one `conversation_id` per agent.
+If the first answer is not enough, the MCP client decides to call a continue
+tool with the returned `conversation_id`; the router preserves that agent's
+A2A `context_id`.
+
+| Tool | Purpose |
+|---|---|
+| `search_agents(query, tags?, limit=10)` | Discover active agents by text search |
+| `ask_agents(message, query?, tags?, limit=10, agent_ids?)` | Discover and ask selected agents once in parallel |
+| `continue_agent_conversation(conversation_id, message)` | Follow up with one agent using its saved A2A context |
+| `continue_agent_conversations(conversation_ids, message)` | Follow up with several prior conversations in parallel |
+| `get_agent_conversation(conversation_id)` | Inspect the saved local transcript |
+| `finish_agent_conversation(conversation_id)` | Optional: mark complete and close the Weave conversation trace |
+
+```bash
+# stdio (local MCP clients)
+uv run agent-router
+
+# Streamable HTTP
+uv run agent-router --transport http --host 0.0.0.0 --port 8766
+```
+
+Weave tracing is required for the router. Set `AGENT_ROUTER_WEAVE_PROJECT` to
+choose the project. Each router-managed A2A conversation gets a stable
+`weave_trace_id`; follow-up turns are logged with the same `conversation_id` and
+trace metadata rather than being treated as unrelated turns.
+
 ## Add to Claude Code
 
 ```bash
@@ -60,4 +91,5 @@ uv run python tests/smoke_test.py
 
 SQLite at `registry/registry.db` (override with `AGENT_REGISTRY_DB`).
 Records store the provider's card verbatim plus registry metadata
-(status, timestamps, denormalized tags).
+(status, timestamps, denormalized tags). Router conversations and local turn
+transcripts are stored in the same database.
