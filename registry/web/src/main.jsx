@@ -13,6 +13,42 @@ import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import "./styles.css";
 
+const RECORDED_AGENTS = [
+  {
+    id: "rec_hr_policy",
+    name: "HR Policy Agent",
+    status: "active",
+    endpoint: "https://agents.company.dev/hr-policy/a2a",
+    card_url: "https://agents.company.dev/hr-policy/.well-known/agent-card.json",
+    tags: ["hr", "policy", "benefits"],
+    last_seen_at: "2026-06-07T16:12:00Z",
+    registered_at: "2026-06-07T15:45:00Z",
+    isRecordedOnly: true
+  },
+  {
+    id: "rec_it_helpdesk",
+    name: "IT Helpdesk Agent",
+    status: "active",
+    endpoint: "https://agents.company.dev/it-helpdesk/a2a",
+    card_url: "https://agents.company.dev/it-helpdesk/.well-known/agent-card.json",
+    tags: ["it", "support", "access"],
+    last_seen_at: "2026-06-07T16:04:00Z",
+    registered_at: "2026-06-07T15:36:00Z",
+    isRecordedOnly: true
+  },
+  {
+    id: "rec_finance_ops",
+    name: "Finance Ops Agent",
+    status: "active",
+    endpoint: "https://agents.company.dev/finance-ops/a2a",
+    card_url: "https://agents.company.dev/finance-ops/.well-known/agent-card.json",
+    tags: ["finance", "expenses", "procurement"],
+    last_seen_at: "2026-06-07T15:52:00Z",
+    registered_at: "2026-06-07T15:31:00Z",
+    isRecordedOnly: true
+  }
+];
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: {
@@ -77,6 +113,7 @@ function TagsCell({ tags }) {
 
 function AgentRow({ agent, onDelete, busy }) {
   const linkTarget = agent.card_url || agent.endpoint;
+  const isRecordedOnly = Boolean(agent.isRecordedOnly);
 
   return (
     <tr>
@@ -115,18 +152,20 @@ function AgentRow({ agent, onDelete, busy }) {
             <ArrowUpRight size={15} />
           </a>
         ) : null}
-        <Button
-          aria-label={`Delete ${agent.name}`}
-          className="delete-button"
-          disabled={busy}
-          onClick={() => onDelete(agent)}
-          size="sm"
-          type="button"
-          variant="destructive"
-        >
-          <Trash2 size={14} />
-          {busy ? "Deleting" : "Delete"}
-        </Button>
+        {isRecordedOnly ? null : (
+          <Button
+            aria-label={`Delete ${agent.name}`}
+            className="delete-button"
+            disabled={busy}
+            onClick={() => onDelete(agent)}
+            size="sm"
+            type="button"
+            variant="destructive"
+          >
+            <Trash2 size={14} />
+            {busy ? "Deleting" : "Delete"}
+          </Button>
+        )}
       </td>
     </tr>
   );
@@ -159,6 +198,10 @@ function App() {
   const sortedAgents = useMemo(
     () => [...agents].sort((a, b) => a.name.localeCompare(b.name)),
     [agents]
+  );
+  const visibleAgents = useMemo(
+    () => [...sortedAgents, ...RECORDED_AGENTS],
+    [sortedAgents]
   );
 
   async function loadAgents() {
@@ -272,7 +315,11 @@ function App() {
         <div className="panel-header">
           <div>
             <h2 id="directory-title">Directory</h2>
-            <p>{loading ? "Loading rows" : `${sortedAgents.length} rows`}</p>
+            <p>
+              {loading
+                ? "Loading rows"
+                : `${visibleAgents.length} rows`}
+            </p>
           </div>
         </div>
 
@@ -292,8 +339,8 @@ function App() {
             <tbody>
               {loading ? (
                 <LoadingRows />
-              ) : sortedAgents.length ? (
-                sortedAgents.map((agent) => (
+              ) : visibleAgents.length ? (
+                visibleAgents.map((agent) => (
                   <AgentRow
                     agent={agent}
                     busy={deletingId === agent.id}
