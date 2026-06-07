@@ -61,6 +61,32 @@ uv run agent-registry
 
 # Streamable HTTP (hosted — anyone can point their client at it)
 uv run agent-registry --transport http --host 0.0.0.0 --port 8765
+
+# React registration UI + lightweight JSON backend
+uv run agent-registry-ui --port 8767
+```
+
+The web backend wraps the same SQLite DB and exposes:
+
+```text
+GET    /api/agents
+POST   /api/agents        {"card_url": "https://example.com"}
+DELETE /api/agents/{id}
+```
+
+The React app lives in `web/`. Build it for the backend to serve:
+
+```bash
+cd web
+npm install
+npm run build
+```
+
+For frontend development, run the backend on port 8767 and Vite separately:
+
+```bash
+cd web
+npm run dev
 ```
 
 ## Router MCP server
