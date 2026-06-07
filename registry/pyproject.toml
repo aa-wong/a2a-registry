@@ -9,6 +9,7 @@ dependencies = [
     "httpx>=0.27",
     "psycopg[binary]>=3.2",
     "python-dotenv>=1.0",
+    "redis>=5.0",
     "weave>=0.52.42",
 ]
 

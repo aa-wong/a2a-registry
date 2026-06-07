@@ -6,6 +6,9 @@ tags. Backend selection: if DATABASE_URL is set (e.g. a Neon connection
 string), connect to Postgres via psycopg; otherwise fall back to a local
 SQLite file — zero-setup for local dev and tests.
 
+Router conversation/session state uses Redis when Redis is configured via the
+Python redis client; otherwise it follows the same SQL fallback.
+
 Connections are opened per operation — cheap for SQLite, and the right
 shape for serverless Postgres (Neon's pooler) where connections must not
 outlive a Lambda invocation. SQL is written once in %s placeholder style;
@@ -25,6 +28,8 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+
+from . import redis_cache
 
 load_dotenv()
 
@@ -251,7 +256,10 @@ def upsert_agent(
             ),
         )
     # Read back on a fresh connection, after the insert has committed.
-    return get_agent(agent_id)  # type: ignore[return-value]
+    record = get_agent(agent_id)
+    if record is not None:
+        redis_cache.agent_upserted(record)
+    return record  # type: ignore[return-value]
 
 
 def get_agent(agent_id: str) -> dict[str, Any] | None:
@@ -259,7 +267,10 @@ def get_agent(agent_id: str) -> dict[str, Any] | None:
         row = conn.execute(
             "SELECT * FROM agents WHERE id = %s", (agent_id,)
         ).fetchone()
-        return _to_record(row) if row else None
+        record = _to_record(row) if row else None
+        if record is not None:
+            redis_cache.cache_agent(record)
+        return record
 
 
 def list_agents(status: str | None = None) -> list[dict[str, Any]]:
@@ -273,7 +284,9 @@ def list_agents(status: str | None = None) -> list[dict[str, Any]]:
             rows = conn.execute(
                 "SELECT * FROM agents ORDER BY registered_at"
             ).fetchall()
-        return [_to_record(r) for r in rows]
+        records = [_to_record(r) for r in rows]
+        redis_cache.cache_agents(records)
+        return records
 
 
 def update_status(agent_id: str, status: str, seen: bool) -> None:
@@ -287,12 +300,22 @@ def update_status(agent_id: str, status: str, seen: bool) -> None:
             conn.execute(
                 "UPDATE agents SET status = %s WHERE id = %s", (status, agent_id)
             )
+    record = get_agent(agent_id)
+    if record is not None:
+        redis_cache.agent_status_updated(record)
 
 
 def delete_agent(agent_id: str) -> bool:
     with _connect() as conn:
+        row = conn.execute("SELECT * FROM agents WHERE id = %s", (agent_id,)).fetchone()
+        if row is None:
+            return False
+        record = _to_record(row)
         cur = conn.execute("DELETE FROM agents WHERE id = %s", (agent_id,))
-        return cur.rowcount > 0
+    deleted = cur.rowcount > 0
+    if deleted:
+        redis_cache.agent_deleted(record)
+    return deleted
 
 
 def create_conversation(
@@ -304,6 +327,16 @@ def create_conversation(
     weave_trace_id: str | None = None,
     weave_root_call_id: str | None = None,
 ) -> dict[str, Any]:
+    if redis_cache.session_enabled():
+        return redis_cache.create_conversation(
+            agent_id=agent_id,
+            agent_name=agent_name,
+            endpoint=endpoint,
+            card_url=card_url,
+            weave_trace_id=weave_trace_id,
+            weave_root_call_id=weave_root_call_id,
+        )
+
     conversation_id = f"conv_{uuid.uuid4().hex[:12]}"
     timestamp = now_iso()
     with _connect() as conn:
@@ -337,6 +370,14 @@ def set_conversation_trace(
     weave_trace_id: str | None,
     weave_root_call_id: str | None,
 ) -> None:
+    if redis_cache.session_enabled():
+        redis_cache.set_conversation_trace(
+            conversation_id,
+            weave_trace_id=weave_trace_id,
+            weave_root_call_id=weave_root_call_id,
+        )
+        return
+
     with _connect() as conn:
         conn.execute(
             """
@@ -355,6 +396,15 @@ def update_conversation_context(
     task_id: str | None,
     status: str = "active",
 ) -> None:
+    if redis_cache.session_enabled():
+        redis_cache.update_conversation_context(
+            conversation_id,
+            a2a_context_id=a2a_context_id,
+            task_id=task_id,
+            status=status,
+        )
+        return
+
     with _connect() as conn:
         row = conn.execute(
             "SELECT a2a_context_id, task_id FROM conversations WHERE id = %s",
@@ -388,6 +438,17 @@ def append_conversation_turn(
     task_id: str | None,
     error: str | None = None,
 ) -> dict[str, Any]:
+    if redis_cache.session_enabled():
+        return redis_cache.append_conversation_turn(
+            conversation_id=conversation_id,
+            request=request,
+            response=response,
+            raw_response=raw_response,
+            a2a_context_id=a2a_context_id,
+            task_id=task_id,
+            error=error,
+        )
+
     with _connect() as conn:
         row = conn.execute(
             "SELECT COALESCE(MAX(turn_index), 0) AS max_turn "
@@ -433,6 +494,13 @@ def get_conversation(
     include_turns: bool = True,
     include_raw: bool = False,
 ) -> dict[str, Any] | None:
+    if redis_cache.session_enabled():
+        return redis_cache.get_conversation(
+            conversation_id,
+            include_turns=include_turns,
+            include_raw=include_raw,
+        )
+
     with _connect() as conn:
         row = conn.execute(
             "SELECT * FROM conversations WHERE id = %s", (conversation_id,)
@@ -456,6 +524,13 @@ def list_conversations(
     agent_id: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
+    if redis_cache.session_enabled():
+        return redis_cache.list_conversations(
+            status=status,
+            agent_id=agent_id,
+            limit=limit,
+        )
+
     clauses: list[str] = []
     params: list[Any] = []
     if status:
@@ -475,6 +550,10 @@ def list_conversations(
 
 
 def finish_conversation(conversation_id: str, status: str = "completed") -> None:
+    if redis_cache.session_enabled():
+        redis_cache.finish_conversation(conversation_id, status=status)
+        return
+
     with _connect() as conn:
         conn.execute(
             "UPDATE conversations SET status = %s, updated_at = %s WHERE id = %s",

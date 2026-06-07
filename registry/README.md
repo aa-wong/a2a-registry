@@ -145,9 +145,54 @@ uv run python tests/smoke_test.py
 
 ## Storage
 
-SQLite defaults to `registry/registry.db` when run from a source checkout. When
-run as an installed `uvx`/`npx` tool, it uses a per-user data directory. Override
-either mode with `AGENT_REGISTRY_DB`.
+The Python registry MCP is the source of truth. It writes to Postgres when
+`DATABASE_URL` is set, otherwise SQLite. SQLite defaults to
+`registry/registry.db` when run from a source checkout; installed `uvx`/`npx`
+runs use a per-user data directory. Override SQLite with `AGENT_REGISTRY_DB`.
+
+Redis is optional and uses the Python `redis` client. Configure either a URL or
+explicit connection fields:
+
+```bash
+export AGENT_REGISTRY_REDIS_HOST=your-redis-host
+export AGENT_REGISTRY_REDIS_PORT=6379
+export AGENT_REGISTRY_REDIS_USERNAME=default
+export AGENT_REGISTRY_REDIS_PASSWORD=...
+# export AGENT_REGISTRY_REDIS_SSL=1   # if your Redis endpoint requires TLS
+```
+
+`REDIS_URL` and `AGENT_REGISTRY_REDIS_URL` are also supported.
+
+When Redis is configured, the registry mirrors authoritative SQL agent records
+into Redis and publishes change events. Redis failures are ignored for the agent
+catalog mirror by default so the MCP remains available; set
+`AGENT_REGISTRY_REDIS_STRICT=1` to make Redis write failures fail catalog
+operations.
+
+Router conversation/session state uses Redis when Redis is configured, matching
+Redis' session-management model: live conversation handles, A2A context ids, and
+local turn transcripts are read from and written to Redis during the session.
+Set `AGENT_REGISTRY_SESSION_BACKEND=sql` to keep router sessions in the SQL
+database. Set `AGENT_REGISTRY_REDIS_SESSION_TTL_SECONDS` to expire transient
+session keys.
+
+Redis keys default to the `agent-registry` prefix (override with
+`AGENT_REGISTRY_REDIS_PREFIX`):
+
+```text
+agent-registry:agent:{id}              Hash with the full registry record
+agent-registry:agents:all              Set of agent ids
+agent-registry:agents:status:{status}  Set of agent ids by status
+agent-registry:agents:registered       Sorted set ordered by registration time
+agent-registry:tag:{tag}:agents        Set of agent ids by denormalized tag
+agent-registry:conversation:{id}       Hash with router session metadata
+agent-registry:conversation:{id}:turns List of local transcript turns
+agent-registry:conversations:all       Sorted set ordered by last update
+agent-registry:conversations:status:*  Sorted sets by conversation status
+agent-registry:agent:{id}:conversations Sorted set of conversations by agent
+agent-registry:events                  Stream of agent and conversation events
+```
+
 Records store the provider's card verbatim plus registry metadata
 (status, timestamps, denormalized tags). Router conversations and local turn
-transcripts are stored in the same database.
+transcripts are stored in Redis when configured, otherwise in the SQL database.
