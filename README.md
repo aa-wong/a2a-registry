@@ -38,24 +38,36 @@ the query interface.
 | Path | Contents |
 |---|---|
 | [`registry/`](registry/) | The registry itself — a Python MCP server (FastMCP + SQLite) exposing `register_agent`, `search_agents`, `get_agent_card`, `list_agents` |
+| [`connect/`](connect/) | The communication half — a TypeScript MCP server (`npx a2a-connect`) exposing `connect_agent`, `send_message`, and the conversation/delegation table (`list_connections`, `list_conversations`, `get_conversation`) |
 | [`docs/agent-registry-design.md`](docs/agent-registry-design.md) | Full design doc: architecture, data model, state management, trust challenges, milestones |
+
+## Deployment model
+
+The two servers have opposite natural deployments:
+
+- **Registry (Python)** — *one shared, hosted instance* (Streamable HTTP).
+  It's the directory; its value is that everyone queries the same one.
+- **Connect (TypeScript)** — *per-user, local, via npx*. It holds your
+  private connections and conversation handles in `~/.a2a-connect/`, so
+  everyone runs their own.
 
 ## Quick start
 
 Run the registry directly from this checkout:
 
 ```bash
+# Registry (Python / uv)
 cd registry
 uv sync
+uv run python tests/smoke_test.py        # end-to-end smoke test
+uv run agent-registry                    # stdio (local dev)
+uv run agent-registry --transport http --host 0.0.0.0 --port 8765   # hosted
 
-# Run the end-to-end smoke test (register → search → get card → live two-turn A2A conversation)
-uv run python tests/smoke_test.py
-
-# Run the MCP server (stdio)
-uv run agent-registry
-
-# Or hosted (Streamable HTTP)
-uv run agent-registry --transport http --host 0.0.0.0 --port 8765
+# Connect (TypeScript / Node >= 22.13)
+cd connect
+npm install && npm run build
+npm run smoke                            # end-to-end smoke test
+node dist/index.js                       # stdio
 ```
 
 Or use one-shot install commands:
@@ -75,6 +87,8 @@ claude mcp add agent-registry -- uv --directory "$(pwd)/registry" run agent-regi
 
 # After publishing the npm wrapper:
 claude mcp add agent-registry -- npx -y @a2a-registry/agent-registry
+claude mcp add a2a-connect   -- node "$(pwd)/connect/dist/index.js"
+# (once published to npm: claude mcp add a2a-connect -- npx -y a2a-connect)
 ```
 
 Then ask: *"Find an agent that knows about Aaron and ask it about his AWS
@@ -106,7 +120,7 @@ reputation, and domain verification badges are future work (design doc §7).
 - [x] Design doc
 - [x] Registry MCP server (4 tools, stdio + Streamable HTTP)
 - [x] Lazy health checking (offline agents drop out of search)
-- [x] Smoke test passing against a live A2A agent (aaronwongellis.com)
-- [ ] Orchestrator agent (discover → delegate demo)
+- [x] A2A Connect MCP server (TypeScript, npx-runnable — connections, conversations, delegation table)
+- [x] Smoke tests passing against a live A2A agent (aaronwongellis.com)
 - [ ] Additional demo agents registered
 - [ ] Semantic search via embeddings (stretch)

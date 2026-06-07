@@ -1,0 +1,48 @@
+service: agent-registry
+
+frameworkVersion: '3'
+useDotenv: true
+
+provider:
+  name: aws
+  runtime: python3.12
+  region: us-west-2 # same region as the Neon project — keeps query latency low
+  architecture: arm64
+  memorySize: 512
+  environment:
+    DATABASE_URL: ${env:DATABASE_URL}
+
+functions:
+  mcp:
+    handler: lambda_handler.handler
+    timeout: 29 # API Gateway hard-caps at 30s
+    events:
+      - httpApi: '*'
+  healthRefresh:
+    handler: lambda_handler.refresh
+    timeout: 60
+    events:
+      - schedule: rate(5 minutes)
+
+package:
+  patterns:
+    - '!**'
+    - 'lambda_handler.py'
+    - 'src/agent_registry/**'
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  pythonRequirements:
+    fileName: requirements-lambda.txt
+    # Cross-compile from macOS: pull Lambda-compatible (manylinux aarch64)
+    # wheels instead of host-platform ones. All deps ship binary wheels.
+    pipCmdExtraArgs:
+      - '--platform'
+      - 'manylinux2014_aarch64'
+      - '--only-binary=:all:'
+      - '--python-version'
+      - '3.12'
+      - '--implementation'
+      - 'cp'
