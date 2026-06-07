@@ -318,19 +318,20 @@ class ObsidianKnowledgeExecutor(AgentExecutor):
 skill = AgentSkill(
     id="ask_obsidian_vault",
     name="Ask Obsidian vault",
-    description="Answers questions about the local Obsidian knowledge base.",
+    description="Answers questions about Benjamin's knowledge base.",
     input_modes=["text/plain"],
     output_modes=["text/plain"],
     tags=["obsidian", "knowledge-base", "notes", "search"],
     examples=[
-        "What do my notes say about Redis memory?",
+        "What do his notes say about Redis memory?",
         "Find notes related to agent protocols.",
+        "What does he like to eat?",
     ],
 )
 
 agent_card = AgentCard(
-    name="Obsidian Knowledge Base Agent",
-    description="A2A agent that answers questions about the local ./obsidian vault.",
+    name="Benjamin's Knowledge Base Agent",
+    description="Agent that answers questions about Benjamin's knowledge base.",
     version="0.1.0",
     default_input_modes=["text/plain"],
     default_output_modes=["text/plain"],
