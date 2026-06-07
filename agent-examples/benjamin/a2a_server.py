@@ -17,6 +17,7 @@ from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from a2a.types.a2a_pb2 import TaskState
+from a2a.utils.constants import PROTOCOL_VERSION_CURRENT
 from agents import Agent, OpenAIChatCompletionsModel, RunConfig, Runner, function_tool
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -337,21 +338,24 @@ agent_card = AgentCard(
     supported_interfaces=[
         AgentInterface(
             protocol_binding="JSONRPC",
+            protocol_version=PROTOCOL_VERSION_CURRENT,
             url=BASE_URL,
         ),
     ],
     skills=[skill],
 )
 
+task_store = InMemoryTaskStore()
+
 request_handler = DefaultRequestHandler(
     agent_executor=ObsidianKnowledgeExecutor(),
-    task_store=InMemoryTaskStore(),
+    task_store=task_store,
     agent_card=agent_card,
 )
 
 routes = []
 routes.extend(create_agent_card_routes(agent_card))
-routes.extend(create_jsonrpc_routes(request_handler, "/"))
+routes.extend(create_jsonrpc_routes(request_handler, "/", enable_v0_3_compat=True))
 
 app = Starlette(routes=routes)
 
