@@ -34,7 +34,7 @@ OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/ap
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "z-ai/glm-5.1")
 OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL", "http://localhost")
 OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "smallagent")
-WEAVE_PROJECT = os.getenv("WEAVE_PROJECT", "smallagent-obsidian-a2a")
+WEAVE_PROJECT = os.getenv("WEAVE_PROJECT", "a2a-registry")
 
 MAX_GREP_MATCHES = int(os.getenv("MAX_GREP_MATCHES", "25"))
 MAX_GREP_LINE_CHARS = int(os.getenv("MAX_GREP_LINE_CHARS", "600"))
@@ -236,7 +236,7 @@ obsidian_agent = Agent(
     name="Obsidian Knowledge Base Agent",
     model=_openrouter_model(),
     instructions=f"""
-You answer questions about the Benjamin's Obsidian vault.
+You answer questions about the Benjamin's knowledge. It's in his Obsidian vault.
 
 Vault path: {VAULT_PATH}
 
